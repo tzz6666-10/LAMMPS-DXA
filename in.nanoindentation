@@ -1,0 +1,82 @@
+clear
+units           metal
+atom_style      atomic
+dimension       3
+boundary        p p p
+neighbor   0.3 bin
+########Define box and create atoms########
+##Create the indenter atoms##
+read_data Final19.lmp
+# 1 Pd, 2 Ag, 3 Cu, 4 Au, 5 Pt, 6 Ni, 7 C
+mass            1 106.420
+mass            2 107.8682
+mass            3 63.546
+mass            4 196.96657
+mass            5 195.084
+mass            6 58.6934
+mass            7 12.011
+########define box and create atoms########
+region		  boundary_layer_down block INF INF INF INF INF 15 units box
+region		  thermostat_layer block INF INF INF INF 15 30 units box
+region		  newtonian_layer block INF INF INF INF 30 238 units box
+region		  substracte union 3 boundary_layer_down thermostat_layer newtonian_layer units box
+#grouping
+group		  boundary_layer_down region boundary_layer_down
+group		  thermostat_layer region thermostat_layer
+group		  newtonian_layer region newtonian_layer
+group		  substracte region substracte
+group		  tool region indent
+# ----------------------- interatomic interactions ---------------------
+# Metal-metal interactions: Zhou et al. generalized EAM
+# Metal-C interactions: 12-6 LJ, cutoff = 3.0 A
+pair_style      hybrid eam/alloy lj/cut 3.0
+
+# EAM file must contain Pd Ag Cu Au Pt Ni in the same Zhou parameterization
+# cited in the manuscript. Carbon is excluded from the EAM mapping.
+pair_coeff      * * eam/alloy ${eamfile} Pd Ag Cu Au Pt Ni NULL
+# Explicit LJ parameters reported in the revised manuscript
+# pair: epsilon(eV), sigma(A), cutoff(A)
+pair_coeff      1 7 lj/cut 0.126 2.711 3.0   # Pd-C
+pair_coeff      2 7 lj/cut 0.123 2.718 3.0   # Ag-C
+pair_coeff      3 7 lj/cut 0.108 2.860 3.0   # Cu-C
+pair_coeff      4 7 lj/cut 0.124 2.703 3.0   # Au-C
+pair_coeff      5 7 lj/cut 0.127 2.760 3.0   # Pt-C
+pair_coeff      6 7 lj/cut 0.125 2.691 3.0   # Ni-C
+pair_coeff      7 7 none
+
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# ----------------------- energy minimization --------------------------
+min_style       cg
+thermo          100
+thermo_style    custom step atoms pe etotal fmax
+minimize        1.0e-16 1.0e-8 10000 100000
+
+write_data      minimized.data
+
+# ----------------------- 293 K equilibration --------------------------
+#The overall relaxation
+dump         nve all custom 1000 ./output/relax/relax.* id type x y z
+fix		     1 all nve
+fix		     2 boundary_layer_down setforce 0.0 0.0 0.0 
+velocity	     newtonian_layer set NULL NULL NULL 
+velocity	     thermostat_layer create 293 5812775
+timestep	     0.001
+thermo		 1000
+thermo_style   custom step temp press pe ke etotal
+run		      50000
+write_data     ./output/relax/relax.data
+
+#The loading process
+dump		  1 all custom 1000 ./output/indentation/Indentation.* id type x y z 
+fix		      5 tool move linear 0.0 0.0 -0.4 units box 
+fix		      6 all print 100 "${disp} ${load}" file ./output/indentation/load_disp.txt
+run		      100000
+#The maintenance phase
+fix		      7 tool move linear 0 0 0 units box
+run		      60000
+#The unloading process
+fix		      8 tool move linear 0.0 0.0 0.4 units box 
+run		      100000
+
